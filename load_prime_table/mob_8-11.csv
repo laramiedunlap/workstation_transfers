@@ -1,7 +1,3 @@
-,MoB_bucket,GP
-0,0.0 - 12.0,11258
-1,12.0 - 24.0,25201
-2,24.0 - 48.0,48731
-3,48.0 - 60.0,18802
-4,60.0 - 72.0,15062
-5,72.0 +,53604
+version https://git-lfs.github.com/spec/v1
+oid sha256:816f6398df4e66c65ead9cefc9f96b3ae3aa35979873eb938f29f086883d2a66
+size 129
