@@ -47,13 +47,6 @@ def create_pool_df(pool_dict:dict)-> pd.DataFrame:
     for i, row in df_pool.iterrows():
         count+=1
         for col in df_pool.columns:
-            # ----------------------------------------------------------------------------------------------
-            #Method 1: This line will simply truncate the array to the right length:
-            # ----------------------------------------------------------------------------------------------
-            # df_pool.at[i,col] = row[col][:(max_row_length-count)]
-            # ----------------------------------------------------------------------------------------------
-            #Method 2: Pad arrays with NaNs --> this will truncate the array then fill it back in with NaNs
-            # ----------------------------------------------------------------------------------------------
             arr = row[col][:(max_row_length-count)].astype(float)
             padded_arr = np.pad(arr, (0, max_row_length - (max_row_length-count) ), mode='constant', constant_values=np.nan)
             df_pool.at[i,col] = padded_arr
@@ -155,7 +148,8 @@ def create_data_directory(directory:str)->Path:
     return(Path(directory))
 
 def run_baseline_assembly(maturity_slice:pd.DataFrame, baseline_directory:Path)->None:
-    print('running baseline assembly...')
+    """Assemble CPRs for the baseline maturity bucket"""
+    print('running baseling assembly...')
     pool_dict = create_pooler(maturity_slice)
     pool_df = create_pool_df(pool_dict)
      # From year grouped, you can get all the statistics you need for each bucket
@@ -166,9 +160,21 @@ def run_baseline_assembly(maturity_slice:pd.DataFrame, baseline_directory:Path)-
     lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=baseline_directory)
     return None
 
-def run_notional_assembly(maturity_slice:pd.DataFrame, notional_directory:Path):
-    print('running notional assembly')
-    pass
+def run_bucket_assembly(maturity_slice:pd.DataFrame, buckets:list, col_ref:str, parent_dir:Path)->str:
+    """Assemble CPRs for the all notional buckets passed to the function"""
+    for b in buckets:
+        print(f'running assembly {col_ref} -- {b}...')
+        bucket_directory = create_data_directory(os.path.join(parent_dir,f'{b}/'))
+        bucket_condition = {col_ref:[b]}
+        bucket_slice = subset_dataframe(maturity_slice, bucket_condition)
+        pool_dict = create_pooler(bucket_slice)
+        pool_df = create_pool_df(pool_dict)
+        year_grouped = annualize_pool(pool_df)
+        totals = generate_totals_data(year_grouped=year_grouped, dir=bucket_directory)
+        cpr_heat = generate_cpr_heat(year_grouped=year_grouped, dir=bucket_directory)
+        min_max_mid_df = generate_min_max_mid(cpr_heat=cpr_heat, dir=bucket_directory)
+        lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=bucket_directory)
+    return ('complete')
 
 def main():
     """The script inside main needs to get split out into other functions"""
@@ -198,7 +204,7 @@ def main():
     DATA_DIRECTORY = create_data_directory('CPR_assembly_outputs/')
     MAT_DIRECTORY = create_data_directory(os.path.join(DATA_DIRECTORY,f'{maturity_selection}/'))
     # After Maturity Selection, figure out subset:
-    subset_choice = input("What should we assemble?:\n 1. Baseline\n 2. Margin Buckets\n 3. Notional Buckets\n")
+    subset_choice = input("What should we assemble?:\n 1. Baseline\n 2. Margin Buckets\n 3. Notional Buckets\n 4. NAICS\n 5. State")
 
 
     if subset_choice == '1' or subset_choice.lower() == 'baseline':
@@ -206,38 +212,11 @@ def main():
         run_baseline_assembly(maturity_slice=maturity_slice, baseline_directory=BASELINE_DIRECTORY)
         return print('completed')
     
-    elif subset_choice == '3' or subset_choice.lower() == 'baseline':
-        NOTIONAL_DIRECTORY = create_data_directory(os.path.join(MAT_DIRECTORY,'notional/'))
-        custom_choice = input("Would you like custom buckets? (y/n) ")
-        if custom_choice.lower()=='y':
-            bins = input("enter bin edges seperated by a comma\n")
-            bins = [float(e) for e in bins.split(',')]
-            bins.append(np.inf)
-            maturity_slice['CustomNotionalBuckets'] = pd.cut(maturity_slice['LoanAmt'], bins=bins)
-            notional_buckets = maturity_slice['CustomNotionalBuckets'].value_counts().index.to_list()
-            notional_reference = 'CustomNotionalBuckets'
-        for b in notional_buckets:
-            print(f"running assembly for {b}...")
-            bucket_directory = create_data_directory(os.path.join(NOTIONAL_DIRECTORY,f'{b}/'))
-            bucket_condition = {notional_reference:[b]}
-            bucket_slice = subset_dataframe(maturity_slice, bucket_condition)
-            pool_dict = create_pooler(bucket_slice)
-            pool_df = create_pool_df(pool_dict)
-            # From year grouped, you can get all the statistics you need for each bucket
-            try:
-                year_grouped = annualize_pool(pool_df)
-            except KeyError:
-                print('KeyError encountered')
-                print(pool_df)
-                return None
-            totals = generate_totals_data(year_grouped=year_grouped, dir=bucket_directory)
-            cpr_heat = generate_cpr_heat(year_grouped=year_grouped, dir=bucket_directory)
-            min_max_mid_df = generate_min_max_mid(cpr_heat=cpr_heat, dir=bucket_directory)
-            lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=bucket_directory)  
-    else:
+    elif subset_choice=='2' or subset_choice.lower() == 'margin buckets':
     # get all possible margin buckets
     # Ask user for custom margin buckets
-        custom_choice = input("Would you like custom buckets? (y/n) ")
+        MARGIN_DIRECTORY = create_data_directory(os.path.join(MAT_DIRECTORY,'margin/'))
+        custom_choice = input("Would you like custom buckets or 25bps? \n(Initial bucket 0-1%, 1-1.25%, etc.) (y/n) ")
         if custom_choice.lower()=='y':
             bins = input("enter bin edges seperated by a comma\n")
             bins = [float(e) for e in bins.split(',')]
@@ -248,30 +227,35 @@ def main():
         else:
             margin_buckets = maturity_slice['MarginBucket'].value_counts().index.to_list()
             margin_reference = 'MarginBucket'
+        status = run_bucket_assembly(maturity_slice=maturity_slice, buckets=margin_buckets, col_ref=margin_reference, parent_dir=MARGIN_DIRECTORY)
+        print(status)
+        return None
+
+    elif subset_choice == '3' or subset_choice.lower() == 'notional buckets':
+        NOTIONAL_DIRECTORY = create_data_directory(os.path.join(MAT_DIRECTORY,'notional/'))
+        custom_choice = input("Currently there are no preset notional buckets, will you create custom buckets? (y/n) ")
+        if custom_choice.lower()=='y':
+            bins = input("Enter bin edges seperated by a comma\n")
+            print('Example: 0,2500000 --> (0, 2,500,000], (2,500,000, inf]')
+            bins = [float(e) for e in bins.split(',')]
+            bins.append(np.inf)
+            maturity_slice['CustomNotionalBuckets'] = pd.cut(maturity_slice['LoanAmt'], bins=bins)
+            notional_buckets = maturity_slice['CustomNotionalBuckets'].value_counts().index.to_list()
+            notional_reference = 'CustomNotionalBuckets'
+            status = run_bucket_assembly(maturity_slice=maturity_slice, buckets=notional_buckets,col_ref=notional_reference,parent_dir=NOTIONAL_DIRECTORY)
+            print(status)
+            return None
     
-        for b in margin_buckets:
-            print(f"running assembly for {b}...")
-            bucket_directory = create_data_directory(os.path.join(MAT_DIRECTORY,f'{b}/'))
-            bucket_condition = {margin_reference:[b]}
-            bucket_slice = subset_dataframe(maturity_slice, bucket_condition)
-            pool_dict = create_pooler(bucket_slice)
-            pool_df = create_pool_df(pool_dict)
-            # From year grouped, you can get all the statistics you need for each bucket
-            year_grouped = annualize_pool(pool_df)
-            totals = generate_totals_data(year_grouped=year_grouped, dir=bucket_directory)
-            cpr_heat = generate_cpr_heat(year_grouped=year_grouped, dir=bucket_directory)
-            min_max_mid_df = generate_min_max_mid(cpr_heat=cpr_heat, dir=bucket_directory)
-            lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=bucket_directory)        
+    elif subset_choice == '4' or subset_choice.lower() == 'NACIS':
+        NAICS_DIRECTORY = create_data_directory(os.path.join(MAT_DIRECTORY, 'NAICS/'))
+        bins = input("Enter NAICS codes seperated by a comma\n")
+        bins = [int(e) for e in bins.split(',')]
+        naics_reference = 'Code'
+        status = run_bucket_assembly(maturity_slice=maturity_slice, buckets=bins, col_ref=naics_reference,parent_dir=NAICS_DIRECTORY)
+        print(status)
+        return None
     
     
-
-
-
-    
-
-    
-
-
 if __name__ == "__main__":
     main()
     
