@@ -170,7 +170,7 @@ def create_data_directory(directory:str)->Path:
 
 def run_baseline_assembly(maturity_slice:pd.DataFrame, baseline_directory:Path)->None:
     """Assemble CPRs for the baseline maturity bucket"""
-    print('running baseling assembly...')
+    print('running baseline assembly...')
     pool_dict = create_pooler(maturity_slice)
     pool_df = create_pool_df(pool_dict)
      # From year grouped, you can get all the statistics you need for each bucket
