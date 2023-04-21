@@ -6,11 +6,16 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
-def subset_dataframe(df, conditions):
+def subset_dataframe(df, conditions, inverse=False):
     """return a subset of a dataframe based on multiple columns and conditions"""
-    mask = pd.Series(True, index=df.index)
-    for col, cond in conditions.items():
-        mask &= df[col].isin(cond)
+    if not inverse:
+        mask = pd.Series(True, index=df.index)
+        for col, cond in conditions.items():
+            mask &= df[col].isin(cond)
+    else:
+        mask = pd.Series(True, index=df.index)
+        for col, cond in conditions.items():
+            mask &= ~df[col].isin(cond)
     return df[mask]
 
  
@@ -153,6 +158,7 @@ def generate_lifetime(cpr_heat:pd.DataFrame, dir:Path)->pd.DataFrame:
     lifetime_df.to_csv(os.path.join(dir,'lifetime.csv'))
     return lifetime_df
 
+
 def create_data_directory(directory:str)->Path:
     if os.path.exists(directory):
         # if it does exist, remove the files from it
@@ -168,6 +174,7 @@ def create_data_directory(directory:str)->Path:
         os.makedirs(directory)
     return(Path(directory))
 
+
 def run_baseline_assembly(maturity_slice:pd.DataFrame, baseline_directory:Path)->None:
     """Assemble CPRs for the baseline maturity bucket"""
     print('running baseline assembly...')
@@ -180,6 +187,7 @@ def run_baseline_assembly(maturity_slice:pd.DataFrame, baseline_directory:Path)-
     min_max_mid_df = generate_min_max_mid(cpr_heat=cpr_heat, dir=baseline_directory)
     lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=baseline_directory)
     return None
+
 
 def run_bucket_assembly(maturity_slice:pd.DataFrame, buckets:list, col_ref:str, parent_dir:Path, args=0)->str:
     """Assemble CPRs for the all notional buckets passed to the function"""
@@ -208,11 +216,15 @@ def run_bucket_assembly(maturity_slice:pd.DataFrame, buckets:list, col_ref:str, 
         lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=bucket_directory)
     return ('complete')
 
+def is_binnable(in_df, col_name):
+    col_dtype = in_df[col_name].dtype
+    return col_dtype == 'float64' or col_dtype == 'int64'
+
 def main():
     """The script inside main needs to get split out into other functions"""
     print('booting up...\n')
-    # loan_data = pd.read_csv("raw_data/loans_v2.csv")
-    loan_data = pd.read_csv("raw_data/master_loan_tape.csv")
+    loan_data = pd.read_csv("raw_data/loans_v2.csv")
+    # loan_data = pd.read_csv("raw_data/master_loan_tape.csv")
     # format date columns to datetime data types
     date_cols = [c for c in loan_data.columns if str(c)[-2:]=='Dt']
     for col in date_cols:
@@ -229,17 +241,18 @@ def main():
     else:
         # This means the user typed the index
         maturity_selection = maturity_choices[int(maturity_selection)]
-    
     # Slice to the correct maturity loans for the user's selection
     maturity_condition = {'MatBucket':[maturity_selection]}
     maturity_slice = subset_dataframe(loan_data, maturity_condition)
+    if maturity_selection != '21+':
+        maturity_slice.loc[maturity_slice['PP_qty']==maturity_slice['MaturityMthsQty'],'PrepayMthsQty']= np.nan
+        maturity_slice.loc[maturity_slice['PP_qty']==maturity_slice['MaturityMthsQty'],'DefaultMthsQty']= np.nan
     # Create data directory
     DATA_DIRECTORY = create_data_directory('CPR_assembly_outputs/')
     MAT_DIRECTORY = create_data_directory(os.path.join(DATA_DIRECTORY,f'{maturity_selection}/'))
     # After Maturity Selection, figure out subset:
-    subset_choice = input("What should we assemble?:\n 1. Baseline\n 2. Margin Buckets\n 3. Notional Buckets\n 4. NAICS\n 5. State\n")
-
-
+    
+    subset_choice = input("What should we assemble?:\n 1. Baseline\n 2. Margin Buckets\n 3. Notional Buckets\n 4. NAICS\n 5. State\n 6. Combo\n")
     if subset_choice == '1' or subset_choice.lower() == 'baseline':
         BASELINE_DIRECTORY = create_data_directory(os.path.join(MAT_DIRECTORY,'baseline/'))
         run_baseline_assembly(maturity_slice=maturity_slice, baseline_directory=BASELINE_DIRECTORY)
@@ -288,6 +301,40 @@ def main():
         print(status)
         return None
     
+    elif subset_choice == '6' or subset_choice.lower() == 'combo':
+        COMBO_DIRECTORY = create_data_directory(os.path.join(MAT_DIRECTORY,'Combinations/'))
+        options = [x for x in enumerate(maturity_slice.columns.to_list())]
+        options = {key: value for key, value in options}
+        combo_slice = maturity_slice.copy(deep=True)
+        user_initiate = 0
+        while user_initiate == 0:    
+            print('Enter the column number reference for the column you would like to filter on:')
+            choice = int(input(f"{options}\n"))
+            col = options[choice]
+            if col == 'Code':
+                bins = input("Enter NAICS codes seperated by a comma\n")
+                bins = [int(e) for e in bins.split(',')]
+                inverse_map = {'y': False, 'n': True}
+                inverse_opt = input('Inclusive or exclusive? (y= include, n= exclude) ')
+                inverse_opt = inverse_map[inverse_opt]
+                combo_condition = {col:[bins]}
+                combo_slice = subset_dataframe(combo_slice, combo_condition, inverse=inverse_opt)
+                user_initiate = int(input('run? 1= yes, 0= no\n'))
+
+            elif is_binnable(combo_slice,col):
+                bins = input("Enter bin edges seperated by a comma\n")
+                bins = [float(e) for e in bins.split(',')]
+                bins.append(np.inf)
+                combo_slice[f'CustomBuckets_{choice}'] = pd.cut(combo_slice[col], bins=bins)
+                combo_buckets= combo_slice[f'CustomBuckets_{choice}'].value_counts().index.to_list()
+                user_initiate = int(input('run? 1= yes, 0= no\n'))
+    try:
+        status = run_bucket_assembly(combo_slice,combo_buckets,f'CustomBuckets_{choice}',COMBO_DIRECTORY)
+    except KeyError:
+        print(combo_slice.head(10))
+        print('\n' )
+        print(bins)
+
     
 if __name__ == "__main__":
     main()
