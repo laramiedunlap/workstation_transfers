@@ -52,27 +52,6 @@ def create_pool_df(pool_dict:dict)-> pd.DataFrame:
             df_pool.at[i,col] = padded_arr
     return df_pool
 
-
-def annualize_pool(df_pool)->pd.DataFrame:
-    """Annualize the dataframe into vintages. Remove vintages without 12 months of data"""
-    annual_pool = df_pool.copy(deep=True)
-    annual_pool['Year'] = annual_pool.index.astype(int)
-    # Filter out years without 12 months of history
-    # vals = annual_pool['Year'].value_counts().to_dict()
-    # yr_range = []
-    # for k, v in vals.items():
-    #     if v == 12:
-    #         yr_range.append(k)
-
-    # annual_pool = annual_pool[annual_pool['Year'].isin(yr_range)]
-    # Switch to year group
-    year_grouped = annual_pool.groupby('Year')
-    year_grouped = year_grouped.agg(np.nansum)
-    year_grouped['smm'] = (year_grouped['prepayments']+year_grouped['defaults'])/year_grouped['outstanding']
-    year_grouped['cpr'] = (1-(1-year_grouped['smm'])**12)
-
-    return year_grouped
-
 def outstanding_annual_rundown(in_arr):
     return in_arr[::11]
 
@@ -96,27 +75,69 @@ def aggregate_annual_median(in_arr):
     arr_2d = in_arr[:n_years*11].reshape(n_years,11)
     return np.nanmedian(arr_2d, axis=1)
 
-def generate_totals_data(year_grouped:pd.DataFrame, dir:Path)->pd.DataFrame:
-    prepays = year_grouped[['prepayments', 'defaults']].applymap(aggregate_annual_sums).to_dict()
+def annualize_pool(df_pool:pd.DataFrame)->pd.DataFrame:
+    """Annualize the dataframe into vintages and years from origination."""
+    annual_pool = df_pool.copy(deep=True)
+    annual_pool['Year'] = annual_pool.index.astype(int)
+    vals = annual_pool['Year'].value_counts().to_dict()
+    yr_range = []
+    for k, v in vals.items():
+        if v == 12:
+            yr_range.append(k)
+    annual_pool = annual_pool[annual_pool['Year'].isin(yr_range)]
+    year_grouped = annual_pool.groupby('Year')
+    year_grouped = year_grouped.agg(np.nansum)
+    year_grouped['outstanding'] = year_grouped['outstanding'].apply(outstanding_annual_rundown)
+    year_grouped[['prepayments','defaults']] = year_grouped[['prepayments','defaults']].applymap(aggregate_annual_sums)
+    year_grouped['cpr'] = (year_grouped['prepayments']+year_grouped['defaults'])/year_grouped['outstanding']
+    return year_grouped
+
+def enforce_shape(in_df:pd.DataFrame)->pd.DataFrame:
+    data = in_df.copy(deep=True)
+    last_year = data.index.max()+1
+    for i in range(len(data)):
+        max_col = last_year - data.index[i]
+        data.iloc[i,(max_col):] = np.NaN
+    return data
+
+def generate_totals_data(df_pool:pd.DataFrame, dir:Path)->pd.DataFrame:
+    """This method is just getting the raw data for totals into it's own csv file"""
+    annual_pool = df_pool.copy(deep=True)
+    annual_pool['Year'] = annual_pool.index.astype(int)
+    vals = annual_pool['Year'].value_counts().to_dict()
+    yr_range = []
+    for k, v in vals.items():
+        if v == 12:
+            yr_range.append(k)
+    annual_pool = annual_pool[annual_pool['Year'].isin(yr_range)]
+    year_grouped = annual_pool.groupby('Year')
+    year_grouped = year_grouped.agg(np.nansum)
     totals = year_grouped[['outstanding']].applymap(outstanding_annual_rundown).to_dict()
+    prepays = year_grouped[['prepayments']].applymap(aggregate_annual_sums).to_dict()
+    defaults = year_grouped[['defaults']].applymap(aggregate_annual_sums).to_dict()
     totals = totals['outstanding']
+    prepays = prepays['prepayments']
+    defaults = defaults['defaults']
+    prepays = (pd.DataFrame.from_dict(prepays, orient='index'))
     totals = (pd.DataFrame.from_dict(totals, orient='index'))
-    triangles = [totals]
-    triangles += [pd.DataFrame.from_dict(prepays[k], orient='index') for k in prepays.keys()]
+    defaults = (pd.DataFrame.from_dict(defaults, orient='index'))
+    totals = enforce_shape(totals)
+    prepays = enforce_shape(prepays)
+    defaults = enforce_shape(defaults)
+    triangles = [totals, prepays, defaults]
+    # triangles += [pd.DataFrame.from_dict(prepays[k], orient='index') for k in prepays.keys()]
     triangles_df = pd.concat(triangles, axis=0)
     triangles_df.to_csv(os.path.join(dir,'totals.csv'))
     return triangles_df
 
 def generate_cpr_heat(year_grouped:pd.DataFrame, dir:Path)->pd.DataFrame:
-    arr = year_grouped[['cpr']]
-    cpr_heat = arr.applymap(aggregate_annual_median).to_dict()
-    cpr_heat = cpr_heat['cpr']
-    cpr_heat = pd.DataFrame.from_dict(cpr_heat, orient='index')
+    cpr_heat = pd.DataFrame.from_dict(year_grouped['cpr'].to_dict(), orient='index')
+    cpr_heat = enforce_shape(cpr_heat)
     cpr_heat.to_csv(os.path.join(dir,'cpr_heat.csv'))
     return cpr_heat
 
 def generate_min_max_mid(cpr_heat:pd.DataFrame, dir:Path)->pd.DataFrame:
-    min_max_mid_df = pd.DataFrame.from_dict({'max': cpr_heat.max(axis=0), 'median': cpr_heat.median(axis=0), 'avg': cpr_heat.mean(axis=0), 'min': cpr_heat.min(axis=0)}).transpose()
+    min_max_mid_df = pd.DataFrame.from_dict({'max': cpr_heat.max(axis=0,skipna=True), 'median': cpr_heat.median(axis=0,skipna=True), 'avg': cpr_heat.mean(axis=0,skipna=True), 'min': cpr_heat.min(axis=0,skipna=True)}).transpose()
     min_max_mid_df.to_csv(os.path.join(dir,'min_max_mids.csv'))
     return min_max_mid_df
     
@@ -154,7 +175,7 @@ def run_baseline_assembly(maturity_slice:pd.DataFrame, baseline_directory:Path)-
     pool_df = create_pool_df(pool_dict)
      # From year grouped, you can get all the statistics you need for each bucket
     year_grouped = annualize_pool(pool_df)
-    totals = generate_totals_data(year_grouped=year_grouped, dir=baseline_directory)
+    totals = generate_totals_data(df_pool=pool_df, dir=baseline_directory)
     cpr_heat = generate_cpr_heat(year_grouped=year_grouped, dir=baseline_directory)
     min_max_mid_df = generate_min_max_mid(cpr_heat=cpr_heat, dir=baseline_directory)
     lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=baseline_directory)
@@ -178,7 +199,7 @@ def run_bucket_assembly(maturity_slice:pd.DataFrame, buckets:list, col_ref:str, 
         pool_dict = create_pooler(bucket_slice)
         pool_df = create_pool_df(pool_dict)
         year_grouped = annualize_pool(pool_df)
-        totals = generate_totals_data(year_grouped=year_grouped, dir=bucket_directory)
+        totals = generate_totals_data(df_pool=pool_df, dir=bucket_directory)
         cpr_heat = generate_cpr_heat(year_grouped=year_grouped, dir=bucket_directory)
         min_max_mid_df = generate_min_max_mid(cpr_heat=cpr_heat, dir=bucket_directory)
         lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=bucket_directory)
