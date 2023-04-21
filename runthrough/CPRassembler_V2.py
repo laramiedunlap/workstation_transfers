@@ -63,7 +63,7 @@ def aggregate_annual_sums(in_arr):
     else:
         subsections = in_arr
     subsections = np.split(subsections, len(subsections) // 11)
-    return (np.sum(subsections, axis=1))
+    return (np.nansum(subsections, axis=1))
 
 def aggregate_annual_averages(in_arr):
     n_years = len(in_arr) // 11
@@ -200,6 +200,9 @@ def run_bucket_assembly(maturity_slice:pd.DataFrame, buckets:list, col_ref:str, 
         pool_df = create_pool_df(pool_dict)
         year_grouped = annualize_pool(pool_df)
         totals = generate_totals_data(df_pool=pool_df, dir=bucket_directory)
+        # This is where I need to tie out the counts for each year to the counts from the baseline. 
+        # So the first column [0] from each totals data frame needs to get stripped out.
+        # Alternatively, we could write code that receives directions about what directories to tie out, then perform the tie out after this. The data is all parked into csvs.
         cpr_heat = generate_cpr_heat(year_grouped=year_grouped, dir=bucket_directory)
         min_max_mid_df = generate_min_max_mid(cpr_heat=cpr_heat, dir=bucket_directory)
         lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=bucket_directory)
@@ -208,6 +211,7 @@ def run_bucket_assembly(maturity_slice:pd.DataFrame, buckets:list, col_ref:str, 
 def main():
     """The script inside main needs to get split out into other functions"""
     print('booting up...\n')
+    # loan_data = pd.read_csv("raw_data/loans_v2.csv")
     loan_data = pd.read_csv("raw_data/master_loan_tape.csv")
     # format date columns to datetime data types
     date_cols = [c for c in loan_data.columns if str(c)[-2:]=='Dt']
