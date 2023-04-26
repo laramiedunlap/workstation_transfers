@@ -130,7 +130,6 @@ def generate_totals_data(df_pool:pd.DataFrame, dir:Path)->pd.DataFrame:
     prepays = enforce_shape(prepays)
     defaults = enforce_shape(defaults)
     triangles = [totals, prepays, defaults]
-    # triangles += [pd.DataFrame.from_dict(prepays[k], orient='index') for k in prepays.keys()]
     triangles_df = pd.concat(triangles, axis=0)
     triangles_df.to_csv(os.path.join(dir,'totals.csv'))
     return triangles_df
