@@ -7,7 +7,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 def subset_dataframe(df, conditions, inverse=False):
-    """return a subset of a dataframe based on multiple columns and conditions"""
+    """Return a subset of a dataframe based on multiple columns and conditions"""
     if not inverse:
         mask = pd.Series(True, index=df.index)
         for col, cond in conditions.items():
@@ -185,7 +185,7 @@ def run_baseline_assembly(maturity_slice:pd.DataFrame, baseline_directory:Path)-
     cpr_heat = generate_cpr_heat(year_grouped=year_grouped, dir=baseline_directory)
     min_max_mid_df = generate_min_max_mid(cpr_heat=cpr_heat, dir=baseline_directory)
     lifetime_df = generate_lifetime(cpr_heat=cpr_heat, dir=baseline_directory)
-    return None
+    return ('complete')
 
 
 def run_bucket_assembly(maturity_slice:pd.DataFrame, buckets:list, col_ref:str, parent_dir:Path, args=0)->str:
@@ -227,7 +227,7 @@ def main():
     # format date columns to datetime data types
     date_cols = [c for c in loan_data.columns if str(c)[-2:]=='Dt']
     for col in date_cols:
-        loan_data[col] = pd.to_datetime(loan_data[col])
+        loan_data[col] = pd.to_datetime(loan_data[col], format='mixed')
     # Get user Maturity option
     maturity_choices = loan_data['MatBucket'].value_counts().index.to_list()
     print("Select a Maturity:\n")
@@ -300,6 +300,17 @@ def main():
         print(status)
         return None
     
+    elif subset_choice == '5' or subset_choice.lower() == 'state':
+        STATE_DIRECTORY = create_data_directory(os.path.join(MAT_DIRECTORY,'state/'))
+        print("Getting top 5 states...")
+        top_5_states = maturity_slice[['GP','state_abbreviation','LoanAmt']].groupby('state_abbreviation').sum()[['LoanAmt']].sort_values('LoanAmt',ascending=False).head(5).index.to_list()
+        state_reference = 'state_abbreviation'
+        # state_slice = maturity_slice[maturity_slice['state_abbreviation'].isin(top_5_states)]
+        # status = run_baseline_assembly(state_slice, STATE_DIRECTORY)
+        status = run_bucket_assembly(maturity_slice=maturity_slice, buckets=top_5_states, col_ref=state_reference,parent_dir=STATE_DIRECTORY)
+        print(status)
+        return None
+
     elif subset_choice == '6' or subset_choice.lower() == 'combo':
         COMBO_DIRECTORY = create_data_directory(os.path.join(MAT_DIRECTORY,'Combinations/'))
         options = [x for x in enumerate(maturity_slice.columns.to_list())]

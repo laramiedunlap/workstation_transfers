@@ -57,7 +57,8 @@ class Pooler:
             for i in range(1, len(a)):
                 a[i] = a[i-1] - (b[i-1] + c[i-1])
             self.triangles[t][0] = a
-    # This code gives the arrays we just built the Triangle look, as opposed to seeing a loan count remain constant 
+            
+    # This code gives the arrays we just built the Triangle look, as opposed to seeing all the zero-padding
     def get_max_tbl_cols(self)-> int:
         start_date = None
         end_date = None
