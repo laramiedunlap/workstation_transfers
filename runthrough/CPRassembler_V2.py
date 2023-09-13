@@ -338,6 +338,11 @@ def main():
                 combo_slice[f'CustomBuckets_{choice}'] = pd.cut(combo_slice[col], bins=bins)
                 combo_buckets= combo_slice[f'CustomBuckets_{choice}'].value_counts().index.to_list()
                 user_initiate = int(input('run? 1= yes, 0= no\n'))
+
+            else:
+                print('column not currently supported')
+            
+            
     try:
         status = run_bucket_assembly(combo_slice,combo_buckets,f'CustomBuckets_{choice}',COMBO_DIRECTORY)
     except KeyError:
